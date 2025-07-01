@@ -12,6 +12,7 @@ def call(Map config = [:]) {
         }
 
         stages {
+
             stage('gitCheckout') {
                 steps {
                     git branch: config.repoBranch ?: 'main',
@@ -20,12 +21,64 @@ def call(Map config = [:]) {
                 }
             }
 
-            // Placeholder stages – we'll add more in the next chunks
             stage('compileCode') {
                 steps {
                     sh "mvn compile"
                 }
             }
+
+            stage('testCases') {
+                steps {
+                    sh "mvn test"
+                }
+            }
+
+            stage('fileSystemScanTrivy') {
+                steps {
+                    sh "trivy fs --format table -o trivy-fs-report.html ."
+                }
+            }
+
+            stage('sonarQubeAnalysis') {
+                steps {
+                    withSonarQubeEnv(config.sonarServer ?: 'sonar-boardgame') {
+                        sh """${SCANNER_HOME}/bin/sonar-scanner \
+                            -Dsonar.projectName=${config.sonarProjectName} \
+                            -Dsonar.projectKey=${config.sonarProjectKey} \
+                            -Dsonar.java.binaries=."""
+                    }
+                }
+            }
+
+            stage('buildApp') {
+                steps {
+                    sh "mvn package"
+                }
+            }
+
+            stage('buildTagDockerImage') {
+                steps {
+                    withDockerRegistry(credentialsId: 'docker', url: 'https://index.docker.io/v1/') {
+                        sh "docker build -t ${config.dockerImage} ."
+                    }
+                }
+            }
+
+            stage('dockerImageScan') {
+                steps {
+                    sh "trivy image --format table -o trivy-image-report.html ${config.dockerImage}"
+                }
+            }
+
+            stage('pushDockerImage') {
+                steps {
+                    withDockerRegistry(credentialsId: 'docker', url: 'https://index.docker.io/v1/') {
+                        sh "docker push ${config.dockerImage}"
+                    }
+                }
+            }
+
+            // Optional future: Add Kubernetes deploy here
         }
 
         post {
